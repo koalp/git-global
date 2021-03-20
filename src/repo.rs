@@ -32,10 +32,7 @@ impl Repo {
     }
 
     /// Returns "short format" status output.
-    pub fn get_status_lines(
-        &self,
-        mut status_opts: git2::StatusOptions,
-    ) -> Vec<String> {
+    pub fn get_status_lines(&self, mut status_opts: git2::StatusOptions) -> Vec<String> {
         let git2_repo = self.as_git2_repo();
         let statuses = git2_repo
             .statuses(Some(&mut status_opts))
@@ -49,6 +46,36 @@ impl Repo {
                 format!("{} {}", status_for_path, path)
             })
             .collect()
+    }
+
+    /// Get tree object from string
+    ///
+    /// Returns None if the string doesn't correspond to a revision
+    fn str_to_tree<'a, S: AsRef<str>>(
+        repo: &'a git2::Repository,
+        // TODO: remove the Option : we always use ref
+        arg: S,
+    ) -> Result<Option<git2::Tree<'a>>, git2::Error> {
+        let arg = arg.as_ref();
+        let obj = repo.revparse_single(arg).ok();
+        let tree = match obj {
+            Some(obj) => Some(obj.peel_to_tree()?),
+            None => None,
+        };
+        Ok(tree)
+    }
+
+    /// Returns true if origin is synced, and false if not
+    pub fn is_origin_synced(&self) -> bool {
+        let repo = self.as_git2_repo();
+        let mut diff_opts = git2::DiffOptions::new();
+        diff_opts.minimal(true);
+        // TODO: remove ALL unwrap
+        let obj_master = Self::str_to_tree(&repo, "master").unwrap();
+        let obj_origin = Self::str_to_tree(&repo, "origin/master").unwrap();
+
+        let diff = repo.diff_tree_to_tree(obj_master.as_ref(), obj_origin.as_ref(), None).unwrap();
+        diff.deltas().len() == 0
     }
 
     /// Returns the list of stash entries for the repo.
