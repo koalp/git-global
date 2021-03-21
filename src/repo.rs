@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::path::PathBuf;
+use std::collections::HashSet;
 
 use git2;
 
@@ -48,34 +49,42 @@ impl Repo {
             .collect()
     }
 
-    /// Get tree object from string
-    ///
-    /// Returns None if the string doesn't correspond to a revision
-    fn str_to_tree<'a, S: AsRef<str>>(
-        repo: &'a git2::Repository,
-        // TODO: remove the Option : we always use ref
-        arg: S,
-    ) -> Result<Option<git2::Tree<'a>>, git2::Error> {
-        let arg = arg.as_ref();
-        let obj = repo.revparse_single(arg).ok();
-        let tree = match obj {
-            Some(obj) => Some(obj.peel_to_tree()?),
-            None => None,
-        };
-        Ok(tree)
+    fn branch_to_commit<'a>(
+        branch: Result<(git2::Branch<'a>, git2::BranchType), git2::Error>,
+    ) -> git2::Commit<'a> {
+        branch.unwrap().0.into_reference().peel_to_commit().unwrap()
+    }
+
+    /// walks trough revisions : returns all the ancestores IDs of a Commit
+    fn log<'a>(repo: &git2::Repository, commit: git2::Commit<'a>) -> Vec<git2::Oid> {
+        let mut revwalk = repo.revwalk().unwrap();
+        revwalk.push(commit.id()).unwrap();
+        revwalk.filter_map(|id | id.ok()).collect::<Vec<git2::Oid>>()
     }
 
     /// Returns true if origin is synced, and false if not
     pub fn is_origin_synced(&self) -> bool {
         let repo = self.as_git2_repo();
-        let mut diff_opts = git2::DiffOptions::new();
-        diff_opts.minimal(true);
         // TODO: remove ALL unwrap
-        let obj_master = Self::str_to_tree(&repo, "master").unwrap();
-        let obj_origin = Self::str_to_tree(&repo, "origin/master").unwrap();
+        let local_branches = repo.branches(Some(git2::BranchType::Local)).unwrap();
+        let remote_branches = repo.branches(Some(git2::BranchType::Remote)).unwrap();
 
-        let diff = repo.diff_tree_to_tree(obj_master.as_ref(), obj_origin.as_ref(), None).unwrap();
-        diff.deltas().len() == 0
+
+        //if remote_branches.into_iter().len() == 0 {
+        //    return false;
+        //}
+
+        let remote_commit_ids = remote_branches
+            .map(Self::branch_to_commit)
+            .map(|commit| Self::log(&repo, commit))
+            .flatten()
+            .collect::<Vec<_>>();
+
+        let is_synced = local_branches.into_iter().all(|branch| {
+            let commit_id = Self::branch_to_commit(branch).id();
+            remote_commit_ids.contains(&commit_id)
+        });
+        is_synced
     }
 
     /// Returns the list of stash entries for the repo.
