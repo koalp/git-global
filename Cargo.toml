@@ -26,6 +26,7 @@ clap = "2"
 dirs = "3"
 json = "0.12"
 walkdir = "2"
+log = "0.4.14"
 
 [dev-dependencies]
 regex = "1"

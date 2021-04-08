@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::path::PathBuf;
+use std::collections::HashSet;
 
 use git2;
 
@@ -32,10 +33,7 @@ impl Repo {
     }
 
     /// Returns "short format" status output.
-    pub fn get_status_lines(
-        &self,
-        mut status_opts: git2::StatusOptions,
-    ) -> Vec<String> {
+    pub fn get_status_lines(&self, mut status_opts: git2::StatusOptions) -> Vec<String> {
         let git2_repo = self.as_git2_repo();
         let statuses = git2_repo
             .statuses(Some(&mut status_opts))
@@ -49,6 +47,44 @@ impl Repo {
                 format!("{} {}", status_for_path, path)
             })
             .collect()
+    }
+
+    fn branch_to_commit<'a>(
+        branch: Result<(git2::Branch<'a>, git2::BranchType), git2::Error>,
+    ) -> git2::Commit<'a> {
+        branch.unwrap().0.into_reference().peel_to_commit().unwrap()
+    }
+
+    /// walks trough revisions : returns all the ancestores IDs of a Commit
+    fn log<'a>(repo: &git2::Repository, commit: git2::Commit<'a>) -> Vec<git2::Oid> {
+        let mut revwalk = repo.revwalk().unwrap();
+        revwalk.push(commit.id()).unwrap();
+        revwalk.filter_map(|id | id.ok()).collect::<Vec<git2::Oid>>()
+    }
+
+    /// Returns true if origin is synced, and false if not
+    pub fn is_origin_synced(&self) -> bool {
+        let repo = self.as_git2_repo();
+        // TODO: remove ALL unwrap
+        let local_branches = repo.branches(Some(git2::BranchType::Local)).unwrap();
+        let remote_branches = repo.branches(Some(git2::BranchType::Remote)).unwrap();
+
+
+        //if remote_branches.into_iter().len() == 0 {
+        //    return false;
+        //}
+
+        let remote_commit_ids = remote_branches
+            .map(Self::branch_to_commit)
+            .map(|commit| Self::log(&repo, commit))
+            .flatten()
+            .collect::<Vec<_>>();
+
+        let is_synced = local_branches.into_iter().all(|branch| {
+            let commit_id = Self::branch_to_commit(branch).id();
+            remote_commit_ids.contains(&commit_id)
+        });
+        is_synced
     }
 
     /// Returns the list of stash entries for the repo.
